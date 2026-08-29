@@ -137,7 +137,8 @@
                 const purchasedIds = new Set(purchases.map(p => p.player.id));
                 return playersList.filter(p => 
                     !purchasedIds.has(p.id) && 
-                    (p.nome.toLowerCase().includes(search.toLowerCase()) || p.squadra.toLowerCase().includes(search.toLowerCase()))
+                    (p.nome.toLowerCase().startsWith(search.toLowerCase()) || 
+                     p.squadra.toLowerCase().startsWith(search.toLowerCase()))
                 ).slice(0, 8);
             };
 
