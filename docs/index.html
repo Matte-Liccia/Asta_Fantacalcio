@@ -22,6 +22,13 @@
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Animazione per i toast */
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .toast-enter { animation: slideIn 0.3s ease-out forwards; }
     </style>
 </head>
 <body>
@@ -64,8 +71,18 @@
             const [selectedPlayer, setSelectedPlayer] = React.useState(null);
             const [bidPrice, setBidPrice] = React.useState('');
             const [bidTeam, setBidTeam] = React.useState(0);
+            
+            // Nuovi stati per UI avanzata
+            const [toast, setToast] = React.useState(null);
+            const [viewingTeam, setViewingTeam] = React.useState(null);
 
             const bidInputRef = React.useRef(null);
+
+            // Funzione per i Toast Notification
+            const showToast = (message, type = 'error') => {
+                setToast({ message, type });
+                setTimeout(() => setToast(null), 4000);
+            };
 
             // Caricamento automatico
             React.useEffect(() => {
@@ -92,7 +109,7 @@
                         
                         setPlayersList(mappedPlayers);
                     } catch (error) {
-                        console.warn("Caricamento automatico fallito:", error.message);
+                        console.warn("Caricamento automatico fallito, in attesa di upload manuale.");
                     } finally {
                         setIsLoadingList(false);
                     }
@@ -126,9 +143,10 @@
                         }));
                         
                         setPlayersList(mappedPlayers);
+                        showToast("Listone caricato con successo!", "success");
                     } catch (error) {
                         console.error("Errore nella lettura del file:", error);
-                        alert("Errore nella lettura del file Excel. Assicurati che sia quello corretto.");
+                        showToast("Errore nella lettura del file Excel.");
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -144,7 +162,7 @@
                 }
             }, [teams, purchases]);
 
-            // Auto-focus sul campo prezzo quando si seleziona un giocatore
+            // Auto-focus sul campo prezzo
             React.useEffect(() => {
                 if (selectedPlayer && bidInputRef.current) {
                     bidInputRef.current.focus();
@@ -155,11 +173,11 @@
             const filteredPlayers = React.useMemo(() => {
                 if (search.length < 2) return [];
                 const purchasedIds = new Set(purchases.map(p => p.player.id));
-                const searchLower = search.toLowerCase();
+                const searchLower = search.toLowerCase().trim();
                 return playersList.filter(p => 
                     !purchasedIds.has(p.id) && 
-                    (p.nome.toLowerCase().startsWith(searchLower) || 
-                     p.squadra.toLowerCase().startsWith(searchLower))
+                    (p.nome.toLowerCase().includes(searchLower) || 
+                     p.squadra.toLowerCase().includes(searchLower))
                 ).slice(0, 8);
             }, [search, playersList, purchases]);
 
@@ -170,14 +188,19 @@
                 const emptySlots = 25 - totalPlayers;
                 const remainingBudget = BUDGET - team.spent;
                 const maxBid = remainingBudget - (emptySlots > 0 ? emptySlots - 1 : 0);
-                return { roleCounts, remainingBudget, maxBid, emptySlots };
+                const budgetPercent = ((team.spent / BUDGET) * 100).toFixed(0);
+                return { roleCounts, remainingBudget, maxBid, emptySlots, budgetPercent };
             }, []);
 
             const handlePurchase = () => {
                 if (!selectedPlayer) return;
-                const price = parseInt(bidPrice, 10);
-                if (isNaN(price) || price < 1) {
-                    alert("Inserisci un'offerta valida (almeno 1 credito).");
+                
+                // Validazione rigorosa mantenendo input text
+                const priceString = bidPrice.trim();
+                const price = Number(priceString);
+                
+                if (priceString === '' || isNaN(price) || price < 1 || !Number.isInteger(price)) {
+                    showToast("Inserisci un'offerta valida (numero intero >= 1).");
                     return;
                 }
 
@@ -188,21 +211,22 @@
                 const stats = getTeamStats(team);
                 
                 if (price > stats.maxBid) {
-                    alert(`Supera il rilancio massimo consentito (${stats.maxBid}) per ${team.name}!`);
+                    showToast(`Supera il rilancio massimo consentito (${stats.maxBid} CR) per ${team.name}!`);
                     return;
                 }
                 if (stats.roleCounts[selectedPlayer.ruolo] >= MAX_SLOTS[selectedPlayer.ruolo]) {
-                    alert(`Slot ${selectedPlayer.ruolo} pieni per ${team.name}!`);
+                    showToast(`Slot ${selectedPlayer.ruolo} pieni per ${team.name}!`);
                     return;
                 }
 
-                const newPurchase = { player: selectedPlayer, teamIdx: tIdx, price, id: Date.now() };
+                const newPurchase = { player: selectedPlayer, teamIdx: tIdx, teamName: team.name, price, id: Date.now() };
                 const newTeams = [...teams];
                 newTeams[tIdx].players.push(selectedPlayer);
                 newTeams[tIdx].spent += price;
 
                 setTeams(newTeams);
-                setPurchases([...purchases, newPurchase]);
+                setPurchases([newPurchase, ...purchases]); // Aggiunto in testa per la cronologia
+                showToast(`${selectedPlayer.nome} assegnato a ${team.name} per ${price} CR!`, "success");
                 setSelectedPlayer(null);
                 setSearch('');
                 setBidPrice('');
@@ -216,14 +240,15 @@
 
             const undoLast = () => {
                 if (purchases.length === 0) return;
-                const last = purchases[purchases.length - 1];
+                const last = purchases[0]; // Ora è in testa
                 const newTeams = [...teams];
                 const pIdx = newTeams[last.teamIdx].players.findIndex(p => p.id === last.player.id);
                 if (pIdx !== -1) {
                     newTeams[last.teamIdx].players.splice(pIdx, 1);
                     newTeams[last.teamIdx].spent -= last.price;
                     setTeams(newTeams);
-                    setPurchases(purchases.slice(0, -1));
+                    setPurchases(purchases.slice(1));
+                    showToast(`Acquisto di ${last.player.nome} annullato.`, "success");
                 }
             };
 
@@ -251,15 +276,10 @@
 
             const removeTeam = (idx) => {
                 if (teams[idx].players.length > 0) {
-                    alert("Impossibile rimuovere: la squadra ha già acquistato giocatori. Annulla prima i suoi acquisti.");
+                    showToast("Impossibile rimuovere: la squadra ha già acquistato giocatori.");
                     return;
                 }
                 
-                if (purchases.length > 0 && idx !== teams.length - 1) {
-                    alert("Asta in corso! Puoi rimuovere solo l'ultima squadra della lista per non corrompere l'asta.");
-                    return;
-                }
-
                 if (confirm(`Sei sicuro di voler rimuovere la squadra ${teams[idx].name}?`)) {
                     const newTeams = teams.filter((_, index) => index !== idx);
                     setTeams(newTeams);
@@ -268,15 +288,17 @@
             };
 
             const resetAll = () => {
-                if (confirm("Sei sicuro di voler cancellare TUTTA l'asta e ricominciare da zero?")) {
+                if (confirm("ATTENZIONE: Sei sicuro di voler cancellare TUTTA l'asta e ricominciare da zero?")) {
                     setTeams(INITIAL_TEAMS);
                     setPurchases([]);
                     localStorage.removeItem('coachBeard_teams');
                     localStorage.removeItem('coachBeard_purchases');
+                    showToast("Asta resettata completamente.", "success");
                 }
             };
 
             const generateExport = () => {
+                // Logica di export invariata (funzionante e solida)
                 const excelData = [];
                 const merges = [];
                 const colsWidth = [];
@@ -298,7 +320,7 @@
                     merges.push({ s: { r: 0, c: colOffset }, e: { r: 0, c: colOffset + 2 } });
 
                     excelData[1][colOffset] = "Ruolo";
-                    excelData[1][colOffset + 1] = "Nome Giocatore";
+                    excelData[1][colOffset + 1] = "Nome";
                     excelData[1][colOffset + 2] = "Prezzo";
 
                     colsWidth[colOffset] = { wch: 8 };
@@ -321,17 +343,14 @@
                 });
 
                 const ws = XLSX.utils.aoa_to_sheet(excelData);
-                
                 for (const cellAddress in ws) {
                     if (cellAddress[0] === '!') continue;
                     const cellRow = XLSX.utils.decode_cell(cellAddress).r;
-                    
                     ws[cellAddress].s = {
                         alignment: { horizontal: "center", vertical: "center" },
                         font: { bold: cellRow <= 1 }
                     };
                 }
-
                 ws['!merges'] = merges;
                 ws['!cols'] = colsWidth;
 
@@ -364,12 +383,7 @@
                         <label className="bg-blue-600 hover:bg-blue-500 px-8 py-4 rounded-xl cursor-pointer font-bold transition shadow-lg flex items-center gap-3 text-lg">
                             <i className="fa-solid fa-upload"></i>
                             Carica File Quotazioni (.xlsx)
-                            <input 
-                                type="file" 
-                                accept=".xlsx" 
-                                className="hidden" 
-                                onChange={handleFileUpload} 
-                            />
+                            <input type="file" accept=".xlsx" className="hidden" onChange={handleFileUpload} />
                         </label>
                     </div>
                 );
@@ -377,68 +391,114 @@
             
             return (
                 <div className="h-screen flex flex-col font-sans overflow-hidden">
+                    {/* Header */}
                     <header className="bg-slate-900 text-white p-4 flex justify-between items-center shrink-0 shadow-md">
                         <div className="flex items-center gap-3">
                             <i className="fa-solid fa-clipboard-user text-2xl text-blue-400"></i>
-                            <h1 className="text-xl font-bold uppercase tracking-wider">Asta Live - Fantacalcio</h1>
+                            <h1 className="text-xl font-bold uppercase tracking-wider">Asta Live</h1>
                         </div>
                         <div className="flex gap-4">
-                            <button onClick={undoLast} className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-sm font-semibold rounded shadow transition">
-                                <i className="fa-solid fa-rotate-left mr-2"></i> Annulla Ultimo Acquisto
+                            <button onClick={undoLast} className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-sm font-semibold rounded shadow transition flex items-center">
+                                <i className="fa-solid fa-rotate-left mr-2"></i> Annulla Ultimo
                             </button>
-                            <button onClick={resetAll} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-sm font-semibold rounded shadow transition">
-                                <i className="fa-solid fa-trash mr-2"></i> Reset Totale
+                            <button onClick={generateExport} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-sm font-semibold rounded shadow transition flex items-center">
+                                <i className="fa-solid fa-file-excel mr-2"></i> Esporta Excel
                             </button>
-                            <button onClick={generateExport} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-sm font-semibold rounded shadow transition">
-                                <i className="fa-solid fa-file-excel mr-2"></i> Esporta per Leghe (Excel)
+                            <button onClick={resetAll} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-sm font-semibold rounded shadow transition flex items-center">
+                                <i className="fa-solid fa-power-off mr-2"></i> Reset
                             </button>
                         </div>
                     </header>
 
                     <div className="flex-1 flex overflow-hidden">
-                        <div className="w-1/2 bg-slate-50 border-r border-slate-200 overflow-y-auto p-4 space-y-4">
-                           <div className="flex justify-between items-center border-b pb-2 mb-4">
-                                <h2 className="text-lg font-bold text-slate-700 uppercase">Situazione Squadre ({teams.length})</h2>
-                                <button onClick={addTeam} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm font-bold shadow transition">
-                                    <i className="fa-solid fa-plus mr-1"></i> Aggiungi
-                                </button>
+                        {/* Sidebar Sinistra (Squadre e Cronologia) */}
+                        <div className="w-1/2 flex flex-col bg-slate-50 border-r border-slate-200 overflow-hidden">
+                            {/* Sezione Squadre */}
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                <div className="flex justify-between items-center border-b pb-2 mb-4 sticky top-0 bg-slate-50 z-10">
+                                    <h2 className="text-lg font-bold text-slate-700 uppercase">Squadre ({teams.length})</h2>
+                                    <button onClick={addTeam} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm font-bold shadow transition">
+                                        <i className="fa-solid fa-plus mr-1"></i> Nuova
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                {teams.map((team, idx) => {
+                                    const stats = getTeamStats(team);
+                                    return (
+                                        <div key={team.id || idx} className="bg-white p-3 rounded-lg shadow-sm border border-slate-100 flex flex-col gap-2 relative group">
+                                            <div className="flex justify-between items-center">
+                                                <span className="font-bold text-slate-800 flex items-center gap-2 truncate">
+                                                    {team.name}
+                                                </span>
+                                                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity absolute top-3 right-3 bg-white pl-2">
+                                                    <button onClick={() => setViewingTeam(team)} className="text-slate-400 hover:text-blue-600" title="Vedi Rosa">
+                                                        <i className="fa-solid fa-eye text-xs"></i>
+                                                    </button>
+                                                    <button onClick={() => editTeamName(idx)} className="text-slate-400 hover:text-yellow-600" title="Rinomina">
+                                                        <i className="fa-solid fa-pen text-xs"></i>
+                                                    </button>
+                                                    <button onClick={() => removeTeam(idx)} className="text-slate-400 hover:text-red-600" title="Elimina">
+                                                        <i className="fa-solid fa-trash text-xs"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Info Budget */}
+                                            <div>
+                                                <div className="flex justify-between items-end mb-1">
+                                                    <span className="text-2xl font-black text-green-600 leading-none">{stats.remainingBudget} <span className="text-xs text-slate-400 font-normal">CR</span></span>
+                                                    <span className="text-xs text-slate-500 font-medium">Rilancio max: <strong className="text-slate-800">{stats.maxBid}</strong></span>
+                                                </div>
+                                                <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
+                                                    <div className={`h-1.5 rounded-full ${stats.budgetPercent > 90 ? 'bg-red-500' : stats.budgetPercent > 70 ? 'bg-yellow-400' : 'bg-green-500'}`} style={{width: `${stats.budgetPercent}%`}}></div>
+                                                </div>
+                                                <div className="text-[10px] text-right text-slate-400">Spesi: {team.spent}/{BUDGET}</div>
+                                            </div>
+
+                                            <div className="flex gap-1 text-[11px] mt-auto pt-2 border-t border-slate-50">
+                                                <div className={`px-1 py-0.5 rounded flex-1 text-center font-bold ${stats.roleCounts.P >= MAX_SLOTS.P ? 'bg-slate-200 text-slate-400 line-through' : 'role-P'}`}>P: {stats.roleCounts.P}/3</div>
+                                                <div className={`px-1 py-0.5 rounded flex-1 text-center font-bold ${stats.roleCounts.D >= MAX_SLOTS.D ? 'bg-slate-200 text-slate-400 line-through' : 'role-D'}`}>D: {stats.roleCounts.D}/8</div>
+                                                <div className={`px-1 py-0.5 rounded flex-1 text-center font-bold ${stats.roleCounts.C >= MAX_SLOTS.C ? 'bg-slate-200 text-slate-400 line-through' : 'role-C'}`}>C: {stats.roleCounts.C}/8</div>
+                                                <div className={`px-1 py-0.5 rounded flex-1 text-center font-bold ${stats.roleCounts.A >= MAX_SLOTS.A ? 'bg-slate-200 text-slate-400 line-through' : 'role-A'}`}>A: {stats.roleCounts.A}/6</div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
-                            {teams.map((team, idx) => {
-                                const stats = getTeamStats(team);
-                                return (
-                                    <div key={team.id || idx} className="bg-white p-3 rounded-lg shadow-sm border border-slate-100 flex flex-col gap-2">
-                                        <div className="flex justify-between items-center">
-                                            <span className="font-bold text-slate-800 flex items-center gap-2">
-                                                {team.name}
-                                                <button onClick={() => editTeamName(idx)} className="text-slate-400 hover:text-blue-600 transition" title="Modifica Nome Squadra">
-                                                    <i className="fa-solid fa-pen text-[10px]"></i>
-                                                </button>
-                                                <button onClick={() => removeTeam(idx)} className="text-slate-400 hover:text-red-600 transition" title="Rimuovi Squadra">
-                                                    <i className="fa-solid fa-trash text-[10px]"></i>
-                                                </button>
-                                            </span>
-                                            <span className="text-xl font-black text-green-600">{stats.remainingBudget} <span className="text-xs text-slate-400 font-normal">CR</span></span>
-                                        </div>
-                                        <div className="flex justify-between text-xs text-slate-500 font-medium">
-                                            <span>MAX Rilancio: <strong className="text-slate-800">{stats.maxBid}</strong></span>
-                                            <span>Slot Liberi: <strong>{stats.emptySlots}/25</strong></span>
-                                        </div>
-                                        <div className="flex gap-1 text-[11px] mt-1">
-                                            <div className={`px-2 py-0.5 rounded flex-1 text-center font-bold ${stats.roleCounts.P >= MAX_SLOTS.P ? 'bg-slate-200 opacity-50' : 'role-P'}`}>P: {stats.roleCounts.P}/3</div>
-                                            <div className={`px-2 py-0.5 rounded flex-1 text-center font-bold ${stats.roleCounts.D >= MAX_SLOTS.D ? 'bg-slate-200 opacity-50' : 'role-D'}`}>D: {stats.roleCounts.D}/8</div>
-                                            <div className={`px-2 py-0.5 rounded flex-1 text-center font-bold ${stats.roleCounts.C >= MAX_SLOTS.C ? 'bg-slate-200 opacity-50' : 'role-C'}`}>C: {stats.roleCounts.C}/8</div>
-                                            <div className={`px-2 py-0.5 rounded flex-1 text-center font-bold ${stats.roleCounts.A >= MAX_SLOTS.A ? 'bg-slate-200 opacity-50' : 'role-A'}`}>A: {stats.roleCounts.A}/6</div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                            
+                            {/* Sezione Cronologia Acquisti */}
+                            <div className="h-1/3 min-h-[200px] border-t border-slate-200 bg-white flex flex-col">
+                                <div className="p-3 border-b border-slate-100 bg-slate-50 shrink-0">
+                                    <h3 className="text-sm font-bold text-slate-600 uppercase flex items-center gap-2">
+                                        <i className="fa-solid fa-clock-rotate-left"></i> Ultime Operazioni
+                                    </h3>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-2">
+                                    {purchases.length === 0 ? (
+                                        <div className="text-center text-slate-400 text-sm mt-4 italic">Nessun acquisto registrato</div>
+                                    ) : (
+                                        <ul className="space-y-1">
+                                            {purchases.slice(0, 15).map(pur => (
+                                                <li key={pur.id} className="text-sm p-2 hover:bg-slate-50 rounded flex justify-between items-center border-b border-slate-50 last:border-0">
+                                                    <div className="flex items-center gap-2 truncate">
+                                                        <span className={`inline-block w-5 text-center text-[10px] font-bold rounded role-${pur.player.ruolo}`}>{pur.player.ruolo}</span>
+                                                        <span className="font-semibold text-slate-700 truncate">{pur.player.nome}</span>
+                                                        <span className="text-xs text-slate-400 ml-1">({pur.teamName})</span>
+                                                    </div>
+                                                    <span className="font-black text-blue-600 shrink-0">{pur.price} cr</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
+                        {/* Colonna Destra (Ricerca e Chiamata) */}
                         <div className="w-1/2 flex flex-col bg-white overflow-hidden shadow-[0_0_15px_rgba(0,0,0,0.05)] z-10 relative">
                             <div className="p-6 border-b border-slate-100 shrink-0 bg-slate-50">
-                                <h2 className="text-lg font-bold text-slate-700 mb-4 uppercase">Chiamata / Ricerca Giocatore</h2>
+                                <h2 className="text-lg font-bold text-slate-700 mb-4 uppercase">Ricerca / Chiamata</h2>
                                 <div className="relative">
                                     <i className="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-slate-400"></i>
                                     <input 
@@ -470,7 +530,7 @@
                                             </div>
                                         ))}
                                         {filteredPlayers.length === 0 && (
-                                            <div className="p-4 text-center text-slate-500 text-sm">Nessun giocatore trovato o già acquistato.</div>
+                                            <div className="p-4 text-center text-slate-500 text-sm">Nessun giocatore disponibile con questo nome.</div>
                                         )}
                                     </div>
                                 )}
@@ -514,13 +574,14 @@
                                                     onChange={(e) => setBidTeam(e.target.value)}
                                                 >
                                                     {teams.map((t, idx) => (
-                                                        <option key={t.id || idx} value={idx}>{t.name} (Budget: {getTeamStats(t).remainingBudget} cr | Max Bid: {getTeamStats(t).maxBid} cr)</option>
+                                                        <option key={t.id || idx} value={idx}>{t.name} (Budget: {getTeamStats(t).remainingBudget} | Max Bid: {getTeamStats(t).maxBid})</option>
                                                     ))}
                                                 </select>
+                                                
+                                                {/* L'input type text è stato preservato come richiesto, implementando la validazione lato js */}
                                                 <input 
                                                     ref={bidInputRef}
                                                     type="text" 
-                                                    min="1"
                                                     className="w-24 p-4 bg-slate-800 border border-slate-600 rounded-lg text-white text-center text-2xl font-bold outline-none focus:border-blue-500"
                                                     placeholder="CR"
                                                     value={bidPrice}
@@ -530,7 +591,7 @@
                                             </div>
                                             
                                             <div className="flex gap-4 mt-2">
-                                                <button onClick={markUnsold} className="w-1/3 bg-slate-700 hover:bg-slate-600 font-bold rounded-lg shadow transition text-sm uppercase">Invenduto (Scarta)</button>
+                                                <button onClick={markUnsold} className="w-1/3 bg-slate-700 hover:bg-slate-600 font-bold rounded-lg shadow transition text-sm uppercase">Invenduto</button>
                                                 <button onClick={handlePurchase} className="flex-1 bg-blue-600 hover:bg-blue-500 py-4 font-bold rounded-lg shadow transition text-xl uppercase tracking-wide flex items-center justify-center gap-3">
                                                     <i className="fa-solid fa-gavel"></i> Aggiudica
                                                 </button>
@@ -541,12 +602,63 @@
                                     <div className="h-full flex flex-col items-center justify-center text-slate-400">
                                         <i className="fa-solid fa-magnifying-glass text-8xl mb-6 opacity-10"></i>
                                         <p className="font-medium text-xl">Nessuna chiamata in corso.</p>
-                                        <p className="text-sm mt-2 opacity-60">Cerca un giocatore nel listone per assegnarlo.</p>
+                                        <p className="text-sm mt-2 opacity-60">Cerca un giocatore per procedere all'assegnazione.</p>
                                     </div>
                                 )}
                             </div>
                         </div>
                     </div>
+
+                    {/* Modale Visualizzazione Rosa */}
+                    {viewingTeam && (
+                        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewingTeam(null)}>
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                                <div className="p-4 bg-slate-900 text-white rounded-t-xl flex justify-between items-center">
+                                    <h2 className="text-xl font-bold">Rosa: {viewingTeam.name}</h2>
+                                    <button onClick={() => setViewingTeam(null)} className="text-slate-400 hover:text-white transition">
+                                        <i className="fa-solid fa-xmark text-2xl"></i>
+                                    </button>
+                                </div>
+                                <div className="p-4 overflow-y-auto">
+                                    {['P', 'D', 'C', 'A'].map(ruolo => {
+                                        const giocatoriRuolo = viewingTeam.players.filter(p => p.ruolo === ruolo);
+                                        if (giocatoriRuolo.length === 0) return null;
+                                        return (
+                                            <div key={ruolo} className="mb-4 last:mb-0">
+                                                <h3 className={`font-bold border-b mb-2 pb-1 role-${ruolo} bg-transparent text-slate-800 border-slate-200`}>
+                                                    {ruolo === 'P' ? 'Portieri' : ruolo === 'D' ? 'Difensori' : ruolo === 'C' ? 'Centrocampisti' : 'Attaccanti'} 
+                                                    <span className="text-sm font-normal text-slate-500 ml-2">({giocatoriRuolo.length}/{MAX_SLOTS[ruolo]})</span>
+                                                </h3>
+                                                <ul className="grid grid-cols-2 gap-2">
+                                                    {giocatoriRuolo.map(g => {
+                                                        // Cerca il prezzo di acquisto nella cronologia
+                                                        const acquisto = purchases.find(pur => pur.player.id === g.id && pur.teamName === viewingTeam.name);
+                                                        return (
+                                                            <li key={g.id} className="bg-slate-50 p-2 rounded flex justify-between items-center text-sm border border-slate-100">
+                                                                <span className="font-semibold text-slate-700">{g.nome}</span>
+                                                                <span className="font-black text-blue-600">{acquisto ? acquisto.price : '?'} cr</span>
+                                                            </li>
+                                                        );
+                                                    })}
+                                                </ul>
+                                            </div>
+                                        );
+                                    })}
+                                    {viewingTeam.players.length === 0 && (
+                                        <p className="text-center text-slate-500 italic py-8">Nessun giocatore acquistato.</p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Toast Notification Container */}
+                    {toast && (
+                        <div className={`fixed bottom-6 right-6 px-6 py-4 rounded-lg shadow-2xl z-[200] flex items-center gap-3 text-white toast-enter ${toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'}`}>
+                            <i className={`fa-solid ${toast.type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'} text-xl`}></i>
+                            <p className="font-medium">{toast.message}</p>
+                        </div>
+                    )}
                 </div>
             );
         }
