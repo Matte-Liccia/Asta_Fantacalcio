@@ -238,6 +238,56 @@
                 setBidPrice('');
             };
 
+            // 1. Funzione per la chiamata casuale del giocatore per ruolo
+            const callRandomPlayer = (role) => {
+                const purchasedIds = new Set(purchases.map(p => p.player.id));
+                const availablePlayers = playersList.filter(p => p.ruolo === role && !purchasedIds.has(p.id));
+                
+                if (availablePlayers.length === 0) {
+                    showToast(`Nessun giocatore disponibile rimasto per il ruolo ${role}.`);
+                    return;
+                }
+                
+                const randomIndex = Math.floor(Math.random() * availablePlayers.length);
+                setSelectedPlayer(availablePlayers[randomIndex]);
+                setSearch('');
+            };
+
+            // 2. Funzione per cancellare un acquisto specifico dalla modale
+            const deletePurchase = (playerId, teamName) => {
+                if (!confirm("Sei sicuro di voler annullare questo acquisto e rimuovere il giocatore dalla squadra?")) return;
+                
+                const purchaseIndex = purchases.findIndex(pur => pur.player.id === playerId && pur.teamName === teamName);
+                if (purchaseIndex === -1) return;
+                
+                const purchase = purchases[purchaseIndex];
+                
+                // Rimuove il giocatore dalla cronologia acquisti
+                const newPurchases = [...purchases];
+                newPurchases.splice(purchaseIndex, 1);
+                setPurchases(newPurchases);
+                
+                // Rimuove il giocatore dalla squadra e rimborsa i crediti
+                const newTeams = [...teams];
+                const teamIndex = newTeams.findIndex(t => t.name === teamName);
+                if (teamIndex !== -1) {
+                    const playerIndex = newTeams[teamIndex].players.findIndex(p => p.id === playerId);
+                    if (playerIndex !== -1) {
+                        newTeams[teamIndex].players.splice(playerIndex, 1);
+                        newTeams[teamIndex].spent -= purchase.price;
+                    }
+                }
+                setTeams(newTeams);
+                
+                // Aggiorna in tempo reale la modale di visualizzazione rosa
+                setViewingTeam(prev => {
+                    if (!prev || prev.name !== teamName) return prev;
+                    return newTeams[teamIndex];
+                });
+                
+                showToast(`Acquisto di ${purchase.player.nome} annullato con successo.`, "success");
+            };
+
             const undoLast = () => {
                 if (purchases.length === 0) return;
                 const last = purchases[0]; // Ora è in testa
@@ -298,7 +348,6 @@
             };
 
             const generateExport = () => {
-                // Logica di export invariata (funzionante e solida)
                 const excelData = [];
                 const merges = [];
                 const colsWidth = [];
@@ -509,6 +558,24 @@
                                         onChange={e => setSearch(e.target.value)}
                                     />
                                 </div>
+                                
+                                {/* NUOVO BLOCCO: Pulsanti chiamata casuale */}
+                                <div className="mt-4">
+                                    <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Chiamata Casuale</h3>
+                                    <div className="flex gap-2">
+                                        {['P', 'D', 'C', 'A'].map(r => (
+                                            <button 
+                                                key={r} 
+                                                onClick={() => callRandomPlayer(r)} 
+                                                className={`flex-1 py-2 rounded text-sm font-bold shadow-sm transition hover:opacity-80 role-${r}`}
+                                            >
+                                                {r === 'P' ? 'Portiere' : r === 'D' ? 'Difensore' : r === 'C' ? 'Centrocampista' : 'Attaccante'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                {/* FINE NUOVO BLOCCO */}
+
                                 {search.length > 1 && !selectedPlayer && (
                                     <div className="absolute left-6 right-6 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto z-50">
                                         {filteredPlayers.map(p => (
@@ -578,7 +645,6 @@
                                                     ))}
                                                 </select>
                                                 
-                                                {/* L'input type text è stato preservato come richiesto, implementando la validazione lato js */}
                                                 <input 
                                                     ref={bidInputRef}
                                                     type="text" 
@@ -631,12 +697,21 @@
                                                 </h3>
                                                 <ul className="grid grid-cols-2 gap-2">
                                                     {giocatoriRuolo.map(g => {
-                                                        // Cerca il prezzo di acquisto nella cronologia
                                                         const acquisto = purchases.find(pur => pur.player.id === g.id && pur.teamName === viewingTeam.name);
                                                         return (
-                                                            <li key={g.id} className="bg-slate-50 p-2 rounded flex justify-between items-center text-sm border border-slate-100">
+                                                            <li key={g.id} className="bg-slate-50 p-2 rounded flex justify-between items-center text-sm border border-slate-100 group">
                                                                 <span className="font-semibold text-slate-700">{g.nome}</span>
-                                                                <span className="font-black text-blue-600">{acquisto ? acquisto.price : '?'} cr</span>
+                                                                <div className="flex items-center gap-4">
+                                                                    <span className="font-black text-blue-600">{acquisto ? acquisto.price : '?'} cr</span>
+                                                                    {/* Pulsante di cancellazione (appare al passaggio del mouse) */}
+                                                                    <button 
+                                                                        onClick={() => deletePurchase(g.id, viewingTeam.name)} 
+                                                                        className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity" 
+                                                                        title="Annulla questo acquisto"
+                                                                    >
+                                                                        <i className="fa-solid fa-trash"></i>
+                                                                    </button>
+                                                                </div>
                                                             </li>
                                                         );
                                                     })}
