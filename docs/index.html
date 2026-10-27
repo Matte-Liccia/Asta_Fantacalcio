@@ -238,7 +238,7 @@
                 setBidPrice('');
             };
 
-            // 1. Funzione per la chiamata casuale del giocatore per ruolo
+            // 1. Funzione per la chiamata casuale del giocatore per ruolo (Priorità Titolari)
             const callRandomPlayer = (role) => {
                 const purchasedIds = new Set(purchases.map(p => p.player.id));
                 const availablePlayers = playersList.filter(p => p.ruolo === role && !purchasedIds.has(p.id));
@@ -248,8 +248,20 @@
                     return;
                 }
                 
-                const randomIndex = Math.floor(Math.random() * availablePlayers.length);
-                setSelectedPlayer(availablePlayers[randomIndex]);
+                // Ordina i giocatori per FVM (valore di mercato) decrescente per dare priorità ai titolari/top player
+                const sortedPlayers = [...availablePlayers].sort((a, b) => {
+                    const valA = a.fvm !== undefined ? a.fvm : (a.qa || 0);
+                    const valB = b.fvm !== undefined ? b.fvm : (b.qa || 0);
+                    return valB - valA;
+                });
+                
+                // Crea un bacino di estrazione prendendo il 25% dei migliori disponibili (minimo 12 giocatori per ruolo)
+                const poolSize = Math.max(12, Math.ceil(sortedPlayers.length * 0.25));
+                const priorityPool = sortedPlayers.slice(0, poolSize);
+                
+                // Pesca casualmente solo all'interno del bacino dei giocatori con valore più alto
+                const randomIndex = Math.floor(Math.random() * priorityPool.length);
+                setSelectedPlayer(priorityPool[randomIndex]);
                 setSearch('');
             };
 
